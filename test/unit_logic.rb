@@ -35,7 +35,8 @@ until game.instance_variable_get(:@over)
   # téléporter la balle du joueur juste sous la cible : on simule via plusieurs tirs
   game.instance_variable_set(:@px, target[:x])
   # balle téléportée juste sous la cible : impact garanti en 1 tick
-  game.instance_variable_get(:@bullets).replace([{ x: target[:x], y: target[:y] + 1 }])
+  # coordonnées braille : balle juste sous le sprite (5 pts de large, 4 de haut)
+  game.instance_variable_get(:@bullets).replace([{ x: target[:x] + 2, y: target[:y] + 5 }])
   tick_n(game, 2)
   kills += 1
   raise "boucle infinie de kills" if kills > 100
@@ -47,19 +48,24 @@ raise "pas de victoire" unless game.instance_variable_get(:@won)
 # ── 2) défaite : envahisseurs forcés jusqu'en bas ──
 game2 = Game.new
 game2.start(0)
-# forcer la descente : appeler step massivement (tick rapide)
+# forcer la descente : appeler step massivement ; bombes désactivées pour ce test
 game2.instance_variable_set(:@frame, 0)
-400.times do
+800.times do
   break if game2.instance_variable_get(:@over)
   game2.update(TickMessage.new)
+  game2.instance_variable_set(:@bombs, []) # neutralise les tirs ennemis
 end
+# vies restaurées pour isoler la cause invasion
+game2.instance_variable_set(:@lives, [game2.instance_variable_get(:@lives), 4].max) unless game2.instance_variable_get(:@over)
 puts "2) DÉFAITE par invasion: #{game2.instance_variable_get(:@over) && !game2.instance_variable_get(:@won)} | message: #{game2.instance_variable_get(:@message)[0, 40]}"
 
 # ── 3) défaite par bombes : vies à 1 + bombe sur le joueur ──
 game3 = Game.new
 game3.start(0)
 game3.instance_variable_set(:@lives, 1)
-game3.instance_variable_set(:@bombs, [{ x: game3.instance_variable_get(:@px), y: FIELD_H - 3 }])
+# bombe positionnée pour percuter le vaisseau après 2 ticks (chute de 3 pts/tick)
+px = game3.instance_variable_get(:@px)
+game3.instance_variable_set(:@bombs, [{ x: px + 2, y: DOTS_H - 4 - 6 }])
 2.times { tick_n(game3, 1) }
 puts "3) DÉFAITE par bombes: #{game3.instance_variable_get(:@over) && !game3.instance_variable_get(:@won)}"
 
@@ -70,6 +76,6 @@ game4.start(0)
 px_min = game4.instance_variable_get(:@px)
 40.times { game4.update(key("right")) }
 px_max = game4.instance_variable_get(:@px)
-puts "4) clamps: px min=#{px_min} (>=1) max=#{px_max} (<=#{FIELD_W - 2}): #{px_min >= 1 && px_max <= FIELD_W - 2}"
+puts "4) clamps: px min=#{px_min} (>=1) max=#{px_max} (<=#{DOTS_W - 6}): #{px_min >= 1 && px_max <= DOTS_W - 6}"
 
 puts "tous les tests logiques passent"
