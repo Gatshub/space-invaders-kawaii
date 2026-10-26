@@ -50,7 +50,7 @@ game2 = Game.new
 game2.start(0)
 # forcer la descente : appeler step massivement ; bombes désactivées pour ce test
 game2.instance_variable_set(:@frame, 0)
-800.times do
+1600.times do
   break if game2.instance_variable_get(:@over)
   game2.update(TickMessage.new)
   game2.instance_variable_set(:@bombs, []) # neutralise les tirs ennemis

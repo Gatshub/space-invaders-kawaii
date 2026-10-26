@@ -41,14 +41,16 @@ SOFT_S       = Lipgloss::Style.new.bold(true).foreground(SOFT)
 # ─── Niveaux ─────────────────────────────────────────────────────────────────
 
 LEVELS = [
-  { name: "facile",    rows: 3, cols: 6, speed: 4, bombs: 3, lives: 4 },
-  { name: "moyen",     rows: 4, cols: 7, speed: 3, bombs: 5, lives: 3 },
-  { name: "difficile", rows: 4, cols: 8, speed: 2, bombs: 8, lives: 2 }
+  { name: "facile",    rows: 3, cols: 6, speed: 6, bombs: 4, lives: 4 },
+  { name: "moyen",     rows: 4, cols: 7, speed: 5, bombs: 6, lives: 3 },
+  { name: "difficile", rows: 4, cols: 8, speed: 4, bombs: 9, lives: 2 }
 ].freeze
 
-# Accélération : le tick de base, resserré au fil des kills (min 0.025 s)
-TICK_BASE = 0.04
-TICK_MIN  = 0.022
+# Accélération : le tick se resserre au fil des kills.
+# NB : le runtime bubbletea-ruby plafonne les ticks ~26/s et ne suit pas les
+# délais > ~40 ms ; la vitesse fine se règle donc via `speed` (ticks par pas).
+TICK_BASE = 0.055
+TICK_MIN  = 0.040
 
 # Champ en points braille : chaque caractère = 2 colonnes × 4 lignes de points
 DOTS_W = 88  # 44 caractères de large
