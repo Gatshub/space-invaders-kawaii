@@ -4,17 +4,17 @@
 # Space Invaders kawaii — Ruby + Charm Ruby (bubbletea / lipgloss)
 # Rendu en caractères braille : chaque caractère = 2x4 points, mouvements fluides.
 
-require "bundler/setup"
-require "bubbletea"
-require "lipgloss"
+require 'bundler/setup'
+require 'bubbletea'
+require 'lipgloss'
 
 # ─── Couleurs adaptatives (clair / sombre) ──────────────────────────────────
 
-ACCENT = Lipgloss::AdaptiveColor.new(light: "#D6488C", dark: "#FF9EC4")
-OK     = Lipgloss::AdaptiveColor.new(light: "#1F7A4D", dark: "#7BD8A8")
-KO     = Lipgloss::AdaptiveColor.new(light: "#B3243C", dark: "#FF7B8A")
-MUTED  = Lipgloss::AdaptiveColor.new(light: "#8A7D8F", dark: "#9A8CA0")
-SOFT   = Lipgloss::AdaptiveColor.new(light: "#6E5A75", dark: "#C9BBD1")
+ACCENT = Lipgloss::AdaptiveColor.new(light: '#D6488C', dark: '#FF9EC4')
+OK     = Lipgloss::AdaptiveColor.new(light: '#1F7A4D', dark: '#7BD8A8')
+KO     = Lipgloss::AdaptiveColor.new(light: '#B3243C', dark: '#FF7B8A')
+MUTED  = Lipgloss::AdaptiveColor.new(light: '#8A7D8F', dark: '#9A8CA0')
+SOFT   = Lipgloss::AdaptiveColor.new(light: '#6E5A75', dark: '#C9BBD1')
 
 TITLE_STYLE  = Lipgloss::Style.new.bold(true).foreground(ACCENT)
 BORDER_STYLE = Lipgloss::Style.new.border(:rounded).border_foreground(ACCENT).padding(0, 1)
@@ -36,6 +36,7 @@ HELP_STYLE   = Lipgloss::Style.new.faint(true)
 PAW_STYLE    = Lipgloss::Style.new.foreground(ACCENT)
 PLAIN_S      = Lipgloss::Style.new
 MUTED_S      = Lipgloss::Style.new.foreground(MUTED)
+SOFT_S       = Lipgloss::Style.new.bold(true).foreground(SOFT)
 
 # ─── Niveaux ─────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,13 @@ INVADER_SPRITES = [
   [[0, 1], [1, 1], [2, 0], [3, 0], [4, 1], [0, 2], [4, 2], [1, 3], [2, 3], [3, 3]]
 ].freeze
 SHIP_SPRITE = [[0, 3], [1, 2], [2, 0], [2, 1], [2, 2], [3, 2], [4, 3]].freeze
+
+# Bunkers : 4 blocs immobiles (points braille), érodés par les impacts.
+# Chaque bunker = 12 pts de large × 7 de haut, forme à toit plat.
+BUNKER_W = 12
+BUNKER_H = 7
+BUNKER_COUNT = 4
+BUNKER_Y = DOTS_H - 16
 
 # ─── Braille : encodage d'une cellule 2x4 ────────────────────────────────────
 
@@ -117,6 +125,23 @@ class Game
       lv[:cols].times do |c|
         @invaders << { row: r, col: c, x: 8 + c * 8, y: 2 + r * 7, alive: true }
       end
+    end
+    # bunkers : ensembles de points [x, y]
+    @bunkers = []
+    span = DOTS_W / BUNKER_COUNT
+    BUNKER_COUNT.times do |k|
+      bx = k * span + (span - BUNKER_W) / 2
+      dots = []
+      BUNKER_H.times do |dy|
+        BUNKER_W.times do |dx|
+          # coins supérieurs biseautés + cavité centrale en bas (comme l'original)
+          next if dy == 0 && (dx < 2 || dx >= BUNKER_W - 2)
+          next if dy == 1 && (dx < 1 || dx >= BUNKER_W - 1)
+          next if dy >= BUNKER_H - 2 && dx >= 4 && dx < 8
+          dots << [bx + dx, BUNKER_Y + dy]
+        end
+      end
+      @bunkers << { dots: dots }
     end
   end
 
@@ -192,6 +217,20 @@ class Game
     sprite.map { |dx, dy| [inv[:x] + dx, inv[:y] + dy] }
   end
 
+  # impact sur un bunker : érode le point touché + ses voisins ; true si touché
+  def bunker_hit!(x, y)
+    @bunkers.each do |b|
+      struck = b[:dots].select { |dx, dy| (dx - x).abs <= 1 && (dy - y).abs <= 1 }
+      next if struck.empty?
+      # érosion : retire l'impact + ses voisins directs
+      sx = struck.map(&:first).sum / struck.size
+      sy = struck.map(&:last).sum / struck.size
+      b[:dots].reject! { |dx, dy| (dx - sx).abs <= 1 && (dy - sy).abs <= 1 }
+      return true
+    end
+    false
+  end
+
   def ship_dots
     SHIP_SPRITE.map { |dx, dy| [@px + dx, DOTS_H - 4 + dy] }
   end
@@ -231,6 +270,10 @@ class Game
     end
     @bombs.each { |b| b[:y] += 3 }
     ship = ship_dots
+    # impact sur bunker
+    @bombs.reject! do |b|
+      bunker_hit!(b[:x], b[:y]) || bunker_hit!(b[:x], b[:y] - 1)
+    end
     if @bombs.any? { |b| ship.any? { |sx, sy| (sx - b[:x]).abs <= 1 && (sy - b[:y]).abs <= 1 } }
       @bombs.clear
       @lives -= 1
@@ -247,6 +290,12 @@ class Game
     # ── balle du joueur : 4 points par tick ──
     @bullets.each { |b| b[:y] -= 4 }
     @bullets.dup.each do |b|
+      # impact sur bunker d'abord (les tirs se font absorber)
+      if bunker_hit!(b[:x], b[:y]) || bunker_hit!(b[:x], b[:y] + 1)
+        @bullets.delete(b)
+        @message = "Ton ♡ s'est écrasé sur le barrage... (･_･;"
+        next
+      end
       hit = @invaders.find do |i|
         next false unless i[:alive]
         invader_dots(i).any? { |dx, dy| (dx - b[:x]).abs <= 1 && (dy - b[:y]).abs <= 1 }
@@ -279,7 +328,9 @@ class Game
 
   def center(content)
     lines = content.chomp.split("\n")
-    max_w = lines.map { |l| l.length }.max || 0
+    # mesurer SANS les codes d'échappement (les chaînes sont déjà stylées)
+    visible = ->(l) { l.gsub(/\e\[[0-9;]*m/, "").length }
+    max_w = lines.map { |l| visible.call(l) }.max || 0
     inner = [(@width - max_w) / 2, 0].max
     pad = " " * inner
     lines = lines.map { |l| pad + l }
@@ -330,6 +381,7 @@ class Game
       next unless i[:alive]
       draw.call(invader_dots(i), ROW_STYLES[i[:row] % ROW_STYLES.size])
     end
+    @bunkers.each { |b| draw.call(b[:dots], SOFT_S) }
     draw.call(ship_dots, PLAYER_STYLE) unless @over && !@won
     @bullets.each { |b| draw.call([[b[:x], b[:y]], [b[:x], b[:y] + 1]], BULLET_STYLE) if b[:y] >= 0 && b[:y] < DOTS_H }
     @bombs.each { |b| draw.call([[b[:x], b[:y]], [b[:x], b[:y] + 1]], BOMB_STYLE) if b[:y] >= 0 && b[:y] < DOTS_H }
