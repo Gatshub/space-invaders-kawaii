@@ -41,10 +41,14 @@ SOFT_S       = Lipgloss::Style.new.bold(true).foreground(SOFT)
 # ─── Niveaux ─────────────────────────────────────────────────────────────────
 
 LEVELS = [
-  { name: "facile",    rows: 3, cols: 6, speed: 5, bombs: 3, lives: 4 },
-  { name: "moyen",     rows: 4, cols: 7, speed: 4, bombs: 5, lives: 3 },
-  { name: "difficile", rows: 4, cols: 8, speed: 3, bombs: 8, lives: 2 }
+  { name: "facile",    rows: 3, cols: 6, speed: 4, bombs: 3, lives: 4 },
+  { name: "moyen",     rows: 4, cols: 7, speed: 3, bombs: 5, lives: 3 },
+  { name: "difficile", rows: 4, cols: 8, speed: 2, bombs: 8, lives: 2 }
 ].freeze
+
+# Accélération : le tick de base, resserré au fil des kills (min 0.025 s)
+TICK_BASE = 0.04
+TICK_MIN  = 0.022
 
 # Champ en points braille : chaque caractère = 2 colonnes × 4 lignes de points
 DOTS_W = 88  # 44 caractères de large
@@ -100,6 +104,7 @@ class Game
     @width = 80
     @height = 24
     @paws = 0
+    @bunkers_on = true
   end
 
   def init
@@ -126,8 +131,9 @@ class Game
         @invaders << { row: r, col: c, x: 8 + c * 8, y: 2 + r * 7, alive: true }
       end
     end
-    # bunkers : ensembles de points [x, y]
+    # bunkers : optionnels (bascule avec 'b' au menu)
     @bunkers = []
+    return unless @bunkers_on
     span = DOTS_W / BUNKER_COUNT
     BUNKER_COUNT.times do |k|
       bx = k * span + (span - BUNKER_W) / 2
@@ -146,7 +152,15 @@ class Game
   end
 
   def schedule_tick
-    Bubbletea.tick(0.05) { TickMessage.new } # 20 fps
+    # accélération progressive : le tick se resserre à mesure que la
+    # formation fond (min TICK_MIN)
+    progress = @over || @invaders.nil? ? 0 : alive_count.to_f / (@invaders.size.nonzero? || 1)
+    delay = TICK_MIN + (TICK_BASE - TICK_MIN) * progress
+    Bubbletea.tick(delay) { TickMessage.new } # ~25→45 fps
+  end
+
+  def alive_count
+    @invaders&.count { |i| i[:alive] } || 0
   end
 
   # ── update ──
@@ -178,6 +192,8 @@ class Game
         @level_idx = (@level_idx + 1) % LEVELS.size
       when "up", "k", "left", "h"
         @level_idx = (@level_idx - 1) % LEVELS.size
+      when "b"
+        @bunkers_on = !@bunkers_on
       when "enter", "space", " "
         start(@level_idx)
       when "q", "ctrl+c", "esc"
@@ -351,7 +367,10 @@ class Game
       b << (i == @level_idx ? MSG_STYLE : HUD_STYLE).render(prefix + line) << "\n"
     end
     b << "\n"
-    b << HELP_STYLE.render("↑↓ choisir · entrée jouer · 1/2/3 direct · q quitter")
+    state = @bunkers_on ? GOOD_STYLE.render("on ") : BAD_STYLE.render("off")
+    b << HUD_STYLE.render("  [b] bunkers : ") + state
+    b << "\n"
+    b << HELP_STYLE.render("↑↓ choisir · entrée jouer · 1/2/3 direct · b bunkers · q quitter")
     b << "\n"
     b
   end
@@ -363,7 +382,10 @@ class Game
       GOOD_STYLE.render("vies : #{hearts}")
   end
 
-  # rendu : matrice de points → caractères braille colorés
+  # rendu : matrice de points → caractères braille colorés.
+  # Perf : on groupe les cellules contiguës de même style en un seul
+  # .render() (le binding Go coûte ~0,4 ms par appel → 660 appels/frame
+  # = 285 ms ; groupé, on tombe à quelques ms).
   def game_view
     cells = Array.new(DOTS_H / 4) { Array.new(DOTS_W / 2) { [[], PLAIN_S] } }
 
@@ -387,7 +409,25 @@ class Game
     @bombs.each { |b| draw.call([[b[:x], b[:y]], [b[:x], b[:y] + 1]], BOMB_STYLE) if b[:y] >= 0 && b[:y] < DOTS_H }
 
     field = cells.map do |row|
-      row.map { |dots, style| style.render(dots.empty? ? "⠀" : braille_char(dots)) }.join
+      row_cells = row.map { |dots, style| [dots.empty? ? "⠀" : braille_char(dots), style] }
+      # fusionner les runs de même style ; les runs PLAIN (vides) ne passent
+      # PAS par le binding Go (render d'un style sans attributs = coût par
+      # appel inutile) : chaîne brute.
+      out = +""
+      run_char = +""; run_style = row_cells[0][1]
+      flush = lambda do
+        out << (run_style == PLAIN_S ? run_char : run_style.render(run_char))
+      end
+      row_cells.each do |ch, st|
+        if st == run_style
+          run_char << ch
+        else
+          flush.call
+          run_char = +"#{ch}"; run_style = st
+        end
+      end
+      flush.call
+      out
     end
 
     b = +""
